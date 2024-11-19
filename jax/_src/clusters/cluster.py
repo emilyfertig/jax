@@ -14,16 +14,17 @@
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Sequence
 import logging
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 logger = logging.getLogger(__name__)
 
-class ClusterEnv:
+class ClusterEnv(abc.ABC):
   """Interface for defining a cluster environment.
 
-  To enable auto bootrapping (aka :func:`jax.distributed.initialize()`),
+  To enable auto bootstrapping (aka :func:`jax.distributed.initialize()`),
   cluster environments need to derive from :class:`ClusterEnv` and implement
   :func:`is_env_present`, :func:`get_coordinator_address`,
   :func:`get_process_count`, and :func:`get_process_id`.
@@ -31,7 +32,15 @@ class ClusterEnv:
   """
 
   _cluster_types: list[type[ClusterEnv]] = []
-  opt_in_only_method: bool = False # Override this in derived classes if necessary
+
+  @property
+  def opt_in_only_method(self) -> bool:
+    return False  # Override this in derived classes if necessary.
+
+  @property
+  @abc.abstractmethod
+  def name(self) -> str:
+    pass
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
@@ -52,7 +61,7 @@ class ClusterEnv:
     # First, we check the spec detection method because it will ignore submitted values
     # If if succeeds.
     if cluster_detection_method is not None:
-      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )  # pytype: disable=attribute-error
+      env = next( (env for env in cls._cluster_types if env.name == cluster_detection_method), None )
       if env is None:
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {cluster_detection_method} is not supported.")
@@ -89,12 +98,14 @@ class ClusterEnv:
   # pytype: enable=bad-return-type
 
   @classmethod
+  @abc.abstractmethod
   def is_env_present(cls) -> bool:
     """Returns True if process is running in this cluster environment.
     """
-    raise NotImplementedError("ClusterEnv subclasses must implement is_env_present")
+    pass
 
   @classmethod
+  @abc.abstractmethod
   def get_coordinator_address(cls, timeout_secs: int | None) -> str:
     """Returns address and port used by JAX to bootstrap.
 
@@ -106,15 +117,17 @@ class ClusterEnv:
     Returns:
       "hostname:port"
     """
-    raise NotImplementedError("ClusterEnv subclasses must implement get_coordinator_address")
+    pass
 
   @classmethod
+  @abc.abstractmethod
   def get_process_count(cls) -> int:
-    raise NotImplementedError("ClusterEnv subclasses must implement get_process_count")
+    pass
 
   @classmethod
+  @abc.abstractmethod
   def get_process_id(cls) -> int:
-    raise NotImplementedError("ClusterEnv subclasses must implement get_process_id")
+    pass
 
   @classmethod
   def get_local_process_id(cls) -> int | None:

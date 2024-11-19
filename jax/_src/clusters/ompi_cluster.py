@@ -26,7 +26,9 @@ _LOCAL_PROCESS_ID = 'OMPI_COMM_WORLD_LOCAL_RANK'
 
 class OmpiCluster(clusters.ClusterEnv):
 
-  name: str = "ompi"
+  @property
+  def name(self) -> str:
+    return "ompi"
 
   @classmethod
   def is_env_present(cls) -> bool:

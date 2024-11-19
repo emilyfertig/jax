@@ -23,8 +23,13 @@ from importlib.util import find_spec
 class Mpi4pyCluster(clusters.ClusterEnv):
 
 
-  name: str = "mpi4py"
-  opt_in_only_method: bool = True
+  @property
+  def opt_in_only_method(self) -> bool:
+    return True
+
+  @property
+  def name(self) -> str:
+    return "mpi4py"
 
   @classmethod
   def is_env_present(cls) -> bool:

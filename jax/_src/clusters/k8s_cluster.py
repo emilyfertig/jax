@@ -29,6 +29,10 @@ class K8sCluster(clusters.ClusterEnv):
   # rely on communication to choose one in real time.
   _coordinator_port = '55527'
 
+  @property
+  def name(self) -> str:
+    return "k8scluster"
+
   @classmethod
   def is_env_present(cls) -> bool:
     if 'KUBERNETES_SERVICE_HOST' in os.environ:

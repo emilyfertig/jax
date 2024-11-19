@@ -26,7 +26,9 @@ _NUM_NODES = 'SLURM_STEP_NUM_NODES'
 
 class SlurmCluster(clusters.ClusterEnv):
 
-  name: str = "slurm"
+  @property
+  def name(self) -> str:
+    return "slurm"
 
   @classmethod
   def is_env_present(cls) -> bool:
