@@ -32,6 +32,7 @@ C = TypeVar("C", bound=Callable[..., Any])
 _exclude_paths: list[str] = [__file__, util.__file__]
 
 def register_exclusion(path: str):
+  # Why breakpoint here?
   if path.endswith('lax'): breakpoint()
   _exclude_paths.append(path)
 

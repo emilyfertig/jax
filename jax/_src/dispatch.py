@@ -99,6 +99,7 @@ def xla_primitive_callable(prim: core.Primitive, **params):
       return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
+  # Why is inline=True ok here? Is it a no-op for a primitive?
   return api.jit(prim_fun, inline=True)
 
 
@@ -327,6 +328,8 @@ class CopySemantics(enum.Enum):
   COPY = enum.auto()
   DONATE = enum.auto()
 
+# Why is InternalFloatingPointError necessary? Why can't we just try/catch FloatingPointErrors?
+# Why define __init__ as well as dataclass-like attributes?
 class InternalFloatingPointError(Exception):
   name: str
   idx: int

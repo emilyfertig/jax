@@ -116,6 +116,11 @@ def _nan_check_posthook(fun, args, kwargs, output):
     print("Invalid nan value encountered in the output of a C++-jit/pmap "
           "function. Calling the de-optimized version.")
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+    # If this function returns, does that mean the jitted fn NaNed but the 
+    # non-jitted one didn't? Should we move the longer error message here,
+    # that identifies that case?
+    # How can we test that? (that the right error message appears when we get
+    # NaNs only with JIT)
 
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):

@@ -221,18 +221,23 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
       raise AssertionError("Unreachable") from e
   except dispatch.InternalFloatingPointError as e:
     jaxpr = p.params['jaxpr'].jaxpr
+    # When would we expect tracers to be here?
     tracer_inputs = any(isinstance(x, core.Tracer) for x in args_flat)
     if any(np.any(np.isnan(atom.val)) for atom in jaxpr.outvars
            if isinstance(atom, core.Literal)):
       raise FloatingPointError("cool literal bro") from None
+    # When would we expect jaxpr.eqns to be empty or not?
     if tracer_inputs and jaxpr.eqns:
+      print('here?')
       # transforming, try recursing
       _ = fun(*args, **kwargs)  # probably won't return
       raise FloatingPointError("i tried bro, i tried")
     if jit_info.inline:  # TODO is this even desirable to stop here? maybe print then proceed to recurse?
       raise FloatingPointError(f"it was {jit_info.fun_sourceinfo} bro") from None
     if not tracer_inputs and jaxpr.eqns:
+      print('here2?')
       _ = fun(*args, **kwargs)  # probably won't return
+    # r.e. "maybe an input," can we check if it's an input?
     raise FloatingPointError("i tried bro, i tried")  # maybe an input
 
   if p.attrs_tracked:
@@ -2396,6 +2401,7 @@ def _pjit_transpose(cts_in, *primals_in,
         inline=inline,
         compiler_options_kvs=compiler_options_kvs)
   except dispatch.InternalFloatingPointError:
+    # Was this for your own debugging?
     breakpoint()
     pass
 
