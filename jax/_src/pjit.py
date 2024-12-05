@@ -183,13 +183,13 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     init_states = _get_states(p.attrs_tracked)
     args_flat = [*init_states, *args_flat]
 
+  run_impl = (core.trace_state_clean() and not config.debug_key_reuse.value and
+              not config.data_dependent_tracing_fallback.value)
   try:
     # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
     # and set the context manager down the stack?
     with p.abstract_mesh:
-      if (core.trace_state_clean() and
-          not config.debug_key_reuse.value and
-          not config.data_dependent_tracing_fallback.value):
+      if run_impl:
         args_flat = map(core.full_lower, args_flat)
         core.check_eval_args(args_flat)
         out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
@@ -219,6 +219,11 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
               f"Argument '{name}' of shape {aval.str_short()} of type"
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
+  except dispatch.InternalFloatingPointError as e:
+    if getattr(fun, '__is_primitive__', False):
+      # TODO jit_info.fun_sourceinfo is totally useless here...
+      raise FloatingPointError(f"rats it was the primitive {fun.__qualname__}") from None
+    _maybe_recursive_nan_check(e, run_impl, fun, args, kwargs)
 
   if p.attrs_tracked:
     num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in p.attrs_tracked)
@@ -228,6 +233,20 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
   outs = tree_unflatten(p.out_tree, out_flat)
   return (outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'],
           p.attrs_tracked, compiled, profiler)
+
+
+def _maybe_recursive_nan_check(
+    e: Exception, run_impl: bool, fun: Callable, args, kwargs,
+) -> None:  # always raises an exception
+  print('trying to call un-jitted function...')
+  try:
+    _ = fun(*args, **kwargs)
+  except (FloatingPointError, ZeroDivisionError) as e2:
+    raise e2 from None  # great, we got an internal error, raise it
+  else:
+    print('didnt see a nan when we re-ran...')
+    raise e
+  assert False  # unreachable?
 
 
 def _set_states(attrs_tracked, vals):
@@ -1695,32 +1714,31 @@ def _pjit_call_impl_python(
                           ("out_layouts", out_layouts),
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
-  try:
-    return compiled.unsafe_call(*args), compiled, pgle_profiler
-  except FloatingPointError as e:
-    assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
+  return compiled.unsafe_call(*args), compiled, pgle_profiler
+  # except FloatingPointError as e:
+  #   assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
 
-    if len(jaxpr.eqns) > 1:
-      _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
+  #   if len(jaxpr.eqns) > 1:
+  #     _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
 
-    # If control reaches this line, we got a NaN on the output of `compiled`
-    # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-    msg = (f"{str(e)}. Because "
-           "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
-           "de-optimized function (i.e., the function as if the `jit` "
-           "decorator were removed) was called in an attempt to get a more "
-           "precise error message. However, the de-optimized function did not "
-           "produce invalid values during its execution. This behavior can "
-           "result from `jit` optimizations causing the invalid value to be "
-           "produced. It may also arise from having nan/inf constants as "
-           "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
-           "\n\n"
-           "It may be possible to avoid the invalid value by removing the "
-           "`jit` decorator, at the cost of losing optimizations. "
-           "\n\n"
-           "If you see this error, consider opening a bug report at "
-           "https://github.com/jax-ml/jax.")
-    raise FloatingPointError(msg)
+  #   # If control reaches this line, we got a NaN on the output of `compiled`
+  #   # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
+  #   msg = (f"{str(e)}. Because "
+  #          "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
+  #          "de-optimized function (i.e., the function as if the `jit` "
+  #          "decorator were removed) was called in an attempt to get a more "
+  #          "precise error message. However, the de-optimized function did not "
+  #          "produce invalid values during its execution. This behavior can "
+  #          "result from `jit` optimizations causing the invalid value to be "
+  #          "produced. It may also arise from having nan/inf constants as "
+  #          "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+  #          "\n\n"
+  #          "It may be possible to avoid the invalid value by removing the "
+  #          "`jit` decorator, at the cost of losing optimizations. "
+  #          "\n\n"
+  #          "If you see this error, consider opening a bug report at "
+  #          "https://github.com/jax-ml/jax.")
+  #   raise FloatingPointError(msg)
 
 
 @weakref_lru_cache
@@ -2364,20 +2382,32 @@ def _pjit_transpose(cts_in, *primals_in,
     transpose_in_layouts = (None,) * len(attrs_tracked) + transpose_in_layouts
     transpose_out_layouts = (None,) * len(attrs_tracked) + transpose_out_layouts
 
-  nz_cts_out = pjit_p.bind(
-      *primals_and_nz_cts_in,
-      jaxpr=transpose_jaxpr,
-      in_shardings=transpose_in_shardings,
-      out_shardings=transpose_out_shardings,
-      in_layouts=transpose_in_layouts,
-      out_layouts=transpose_out_layouts,
-      resource_env=resource_env,
-      donated_invars=(False,) * len(primals_and_nz_cts_in),
-      name=name,
-      keep_unused=keep_unused,
-      inline=inline,
-      compiler_options_kvs=compiler_options_kvs)
-
+  try:
+    nz_cts_out = pjit_p.bind(
+        *primals_and_nz_cts_in,
+        jaxpr=transpose_jaxpr,
+        in_shardings=transpose_in_shardings,
+        out_shardings=transpose_out_shardings,
+        in_layouts=transpose_in_layouts,
+        out_layouts=transpose_out_layouts,
+        resource_env=resource_env,
+        donated_invars=(False,) * len(primals_and_nz_cts_in),
+        name=name,
+        keep_unused=keep_unused,
+        inline=inline,
+        compiler_options_kvs=compiler_options_kvs)
+  except dispatch.InternalFloatingPointError as e:
+    print('nan arose in the bwd pass for a pjit function...')
+    print('running the bwd pass un-jitted...')
+    try:
+      _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
+    except (FloatingPointError, ZeroDivisionError) as e2:
+      raise e2 from None  # great
+    else:
+      print('didnt see a nan when re-ran...')
+      raise e
+    assert False
+ 
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
     _set_states(attrs_tracked, final_states)
