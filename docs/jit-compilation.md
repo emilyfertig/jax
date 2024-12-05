@@ -28,6 +28,8 @@ In this section, we will further explore how JAX works, and how we can make it p
 We will discuss the {func}`jax.jit` transformation, which will perform *Just In Time* (JIT)
 compilation of a JAX Python function so it can be executed efficiently in XLA.
 
+(jit-how-jax-transformations-work)=
+
 ## How JAX transformations work
 
 In the previous section, we discussed that JAX allows us to transform Python functions.
@@ -62,7 +64,7 @@ Moreover, JAX often can't detect when side effects are present.
 (If you want debug printing, use {func}`jax.debug.print`. To express general side-effects at the cost of performance, see {func}`jax.experimental.io_callback`.
 To check for tracer leaks at the cost of performance, use with {func}`jax.check_tracer_leaks`).
 
-When tracing, JAX wraps each argument by a *tracer* object. These tracers then record all JAX operations performed on them during the function call (which happens in regular Python). Then, JAX uses the tracer records to reconstruct the entire function. The output of that reconstruction is the jaxpr. Since the tracers do not record the Python side-effects, they do not appear in the jaxpr. However, the side-effects still happen during the trace itself.
+When tracing, JAX wraps each argument by a *tracer* object. Tracer objects are what `jax.jit` uses to extract the sequence of operations specified by the function. Basic tracers are stand-ins that encode the **shape** and **dtype** of the arrays, but are agnostic to the values. The tracers record all JAX operations performed on them during the function call (which happens in regular Python). Then, JAX uses the tracer records to reconstruct the entire function. The output of that reconstruction is the jaxpr. Since the tracers do not record the Python side-effects, they do not appear in the jaxpr. However, the side-effects still happen during the trace itself. The sequence of computations recorded in the jaxpr can then be efficiently applied within XLA to new inputs with the same shape and dtype, without having to re-execute the Python code.
 
 Note: the Python `print()` function is not pure: the text output is a side-effect of the function. Therefore, any `print()` calls will only happen during tracing, and will not appear in the jaxpr:
 
@@ -224,6 +226,76 @@ def g_jit_decorated(x, n):
 
 print(g_jit_decorated(10, 20))
 ```
+
+(jit-static-vs-traced-operations)=
+
+## Static vs traced operations
+
+This distinction between static and traced values makes it important to think about how to keep a static value static. 
+Just as values can be either static or traced, operations can be static or traced.
+Static operations are evaluated at compile-time in Python; traced operations are compiled & evaluated at run-time in XLA.
+
+Consider this function:
+
+```{code-cell}
+:id: XJCQ7slcD4iU
+:outputId: 3646dea0-f6b6-48e9-9dc0-c4dec7816b7a
+:tags: [raises-exception]
+
+import jax.numpy as jnp
+from jax import jit
+
+@jit
+def f(x):
+  return x.reshape(jnp.array(x.shape).prod())
+
+x = jnp.ones((2, 3))
+f(x)
+```
+
++++ {"id": "ZO3GMGrHBZDS"}
+
+This fails with an error specifying that a tracer was found instead of a 1D sequence of concrete values of integer type. Let's add some print statements to the function to understand why this is happening:
+
+```{code-cell}
+:id: Cb4mbeVZEi_q
+:outputId: 30d8621f-34e1-4e1d-e6c4-c3e0d8769ec4
+
+@jit
+def f(x):
+  print(f"x = {x}")
+  print(f"x.shape = {x.shape}")
+  print(f"jnp.array(x.shape).prod() = {jnp.array(x.shape).prod()}")
+  # comment this out to avoid the error:
+  # return x.reshape(jnp.array(x.shape).prod())
+
+f(x)
+```
+
++++ {"id": "viSQPc3jEwJr"}
+
+Notice that although `x` is traced, `x.shape` is a static value. However, when we use `jnp.array` and `jnp.prod` on this static value, it becomes a traced value, at which point it cannot be used in a function like `reshape()` that requires a static input (recall: array shapes must be static).
+
+A useful pattern is to use `numpy` for operations that should be static (i.e. done at compile-time), and use `jax.numpy` for operations that should be traced (i.e. compiled and executed at run-time). For this function, it might look like this:
+
+```{code-cell}
+:id: GiovOOPcGJhg
+:outputId: 5363ad1b-23d9-4dd6-d9db-95a6c9de05da
+
+from jax import jit
+import jax.numpy as jnp
+import numpy as np
+
+@jit
+def f(x):
+  return x.reshape((np.prod(x.shape),))
+
+f(x)
+```
+
++++ {"id": "C-QZ5d1DG-dv"}
+
+For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static manner (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).
 
 ## JIT and caching
 

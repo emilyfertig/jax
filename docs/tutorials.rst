@@ -11,6 +11,7 @@ Tutorials
    jit-compilation
    automatic-vectorization
    automatic-differentiation
+   tracing
    debugging
    random-numbers
    working-with-pytrees
