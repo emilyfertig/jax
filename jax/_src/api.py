@@ -112,10 +112,8 @@ def _nan_check_posthook(fun, args, kwargs, output):
   except dispatch.InternalFloatingPointError as e:
     # compiled_fun can only raise in this case
     assert config.debug_nans.value or config.debug_infs.value
-    print("Invalid nan value encountered in the output of a C++-jit/pmap "
-          "function. Calling the de-optimized version.")
     pjit._maybe_recursive_nan_check(e, True, fun._fun, args, kwargs)
-    assert False  # Unreachable.
+    raise AssertionError("Unreachable") from e
 
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):

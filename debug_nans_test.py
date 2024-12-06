@@ -24,6 +24,7 @@ out, g_vjp = jax.vjp(g, x)
 f_jvp = lambda: jax.jvp(f, [z], [jnp.ones_like(x)])
 
 with jax.debug_nans(True):
+  # jax.print_environment_info()
   f(x)
   # g(x)
   # f_vjp(x)

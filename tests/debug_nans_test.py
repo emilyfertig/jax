@@ -75,7 +75,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def testCallDeoptimized(self, jit):
-    raise SkipTest("re-enable once we handle contexts properly")  # TODO(dougalm)
     @jit
     def f(x):
       return jax.lax.cond(
@@ -163,15 +162,12 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in jit\(true_divide\)"):
+        r"invalid value \(nan\) encountered in primitive div"):
       f(inp, inp)
 
-    # TODO(yashkatariya): Fix this and make true_divide appear in the name again.
-    # Instead of `f` showing up in the error, the name should be of the
-    # primitive (true_divide) in this case.
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in jit\(f\)"):
+        r"invalid value \(nan\) encountered in primitive div"):
       jax.jit(f)(inp, inp)
 
 
