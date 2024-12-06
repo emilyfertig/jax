@@ -224,7 +224,7 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
   except dispatch.InternalFloatingPointError as e:
     if getattr(fun, '__is_primitive__', False):
       # TODO jit_info.fun_sourceinfo is totally useless here...
-      raise FloatingPointError(f"rats it was the primitive {fun.__qualname__}") from None
+      raise FloatingPointError(f"invalid value ({e.ty}) encountered in primitive {fun.__qualname__}") from None
     _maybe_recursive_nan_check(e, run_impl, fun, args, kwargs)
 
   if p.attrs_tracked:
@@ -240,7 +240,8 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
 def _maybe_recursive_nan_check(
     e: Exception, run_impl: bool, fun: Callable, args, kwargs,
 ) -> None:  # always raises an exception
-  print('trying to call un-jitted function...')
+  print("Invalid nan value encountered in the output of a C++-jit/pmap "
+        "function. Calling the de-optimized version.")
   try:
     _ = fun(*args, **kwargs)
   except (FloatingPointError, ZeroDivisionError) as e2:
@@ -248,7 +249,6 @@ def _maybe_recursive_nan_check(
   else:
     print('didnt see a nan when we re-ran...')
     raise e
-  assert False  # unreachable?
 
 
 def _set_states(attrs_tracked, vals):
@@ -1717,26 +1717,10 @@ def _pjit_call_impl_python(
   # except FloatingPointError as e:
   #   assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
 
+  #   TODO(emilyaf): Was this a substitute for __is_primitive__?
   #   if len(jaxpr.eqns) > 1:
   #     _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
 
-  #   # If control reaches this line, we got a NaN on the output of `compiled`
-  #   # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-  #   msg = (f"{str(e)}. Because "
-  #          "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
-  #          "de-optimized function (i.e., the function as if the `jit` "
-  #          "decorator were removed) was called in an attempt to get a more "
-  #          "precise error message. However, the de-optimized function did not "
-  #          "produce invalid values during its execution. This behavior can "
-  #          "result from `jit` optimizations causing the invalid value to be "
-  #          "produced. It may also arise from having nan/inf constants as "
-  #          "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
-  #          "\n\n"
-  #          "It may be possible to avoid the invalid value by removing the "
-  #          "`jit` decorator, at the cost of losing optimizations. "
-  #          "\n\n"
-  #          "If you see this error, consider opening a bug report at "
-  #          "https://github.com/jax-ml/jax.")
   #   raise FloatingPointError(msg)
 
 
@@ -2408,9 +2392,24 @@ def _pjit_transpose(cts_in, *primals_in,
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None  # great
     else:
-      print('didnt see a nan when re-ran...')
-      raise e
-    assert False
+      # If control reaches this line, we got a NaN on the output of `compiled`
+      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
+      msg = (f"{str(e)}. Because "
+            "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
+            "de-optimized function (i.e., the function as if the `jit` "
+            "decorator were removed) was called in an attempt to get a more "
+            "precise error message. However, the de-optimized function did not "
+            "produce invalid values during its execution. This behavior can "
+            "result from `jit` optimizations causing the invalid value to be "
+            "produced. It may also arise from having nan/inf constants as "
+            "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+            "\n\n"
+            "It may be possible to avoid the invalid value by removing the "
+            "`jit` decorator, at the cost of losing optimizations. "
+            "\n\n"
+            "If you see this error, consider opening a bug report at "
+            "https://github.com/jax-ml/jax.")
+      raise FloatingPointError(msg)
  
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
