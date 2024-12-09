@@ -222,10 +222,16 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
   except dispatch.InternalFloatingPointError as e:
-    if getattr(fun, '__is_primitive__', False):
-      # TODO jit_info.fun_sourceinfo is totally useless here...
-      raise FloatingPointError(f"invalid value ({e.ty}) encountered in primitive {fun.__qualname__}") from None
-    _maybe_recursive_nan_check(e, run_impl, fun, args, kwargs)
+    jaxpr = p.params['jaxpr'].jaxpr
+    if any(np.any(np.isnan(atom.val)) for atom in jaxpr.outvars
+           if isinstance(atom, core.Literal)):
+      raise FloatingPointError(f"Function {fun.__qualname__} returns an invalid literal ({e.ty})") from None
+    if any(np.any(np.isnan(arg)) for arg in args
+           if not isinstance(arg, core.Tracer)):
+      raise FloatingPointError(f"An input to function {fun.__qualname__} is invalid ({e.ty}).") from None
+    if len(jaxpr.eqns) == 1:
+      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
+    _maybe_recursive_nan_check(e, fun, args, kwargs)
 
   if p.attrs_tracked:
     num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in p.attrs_tracked)
@@ -237,19 +243,34 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
           p.attrs_tracked, compiled, profiler)
 
 
-def _maybe_recursive_nan_check(
-    e: Exception, run_impl: bool, fun: Callable, args, kwargs,
+def _maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
 ) -> None:  # always raises an exception
   print("Invalid nan value encountered in the output of a C++-jit/pmap "
         "function. Calling the de-optimized version.")
   try:
     _ = fun(*args, **kwargs)
   except (FloatingPointError, ZeroDivisionError) as e2:
-    raise e2 from None  # great, we got an internal error, raise it
+    raise e2 from None
   else:
-    print('didnt see a nan when we re-ran...')
-    raise e
+    _raise_for_no_nan_in_deoptimized(e)
 
+def _raise_for_no_nan_in_deoptimized(e) -> None:
+  msg = (f"{str(e)}. Because "
+        "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
+        "de-optimized function (i.e., the function as if the `jit` "
+        "decorator were removed) was called in an attempt to get a more "
+        "precise error message. However, the de-optimized function did not "
+        "produce invalid values during its execution. This behavior can "
+        "result from `jit` optimizations causing the invalid value to be "
+        "produced. It may also arise from having nan/inf constants as "
+        "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+        "\n\n"
+        "It may be possible to avoid the invalid value by removing the "
+        "`jit` decorator, at the cost of losing optimizations. "
+        "\n\n"
+        "If you see this error, consider opening a bug report at "
+        "https://github.com/jax-ml/jax.")
+  raise FloatingPointError(msg) from None
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr
@@ -2385,8 +2406,8 @@ def _pjit_transpose(cts_in, *primals_in,
         inline=inline,
         compiler_options_kvs=compiler_options_kvs)
   except dispatch.InternalFloatingPointError as e:
-    print('nan arose in the bwd pass for a pjit function...')
-    print('running the bwd pass un-jitted...')
+    print("Invalid nan value encountered in the backward pass of a C++-jit/pmap "
+          "function. Calling the de-optimized backward pass.")
     try:
       _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
     except (FloatingPointError, ZeroDivisionError) as e2:
@@ -2394,22 +2415,7 @@ def _pjit_transpose(cts_in, *primals_in,
     else:
       # If control reaches this line, we got a NaN on the output of `compiled`
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      msg = (f"{str(e)}. Because "
-            "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
-            "de-optimized function (i.e., the function as if the `jit` "
-            "decorator were removed) was called in an attempt to get a more "
-            "precise error message. However, the de-optimized function did not "
-            "produce invalid values during its execution. This behavior can "
-            "result from `jit` optimizations causing the invalid value to be "
-            "produced. It may also arise from having nan/inf constants as "
-            "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
-            "\n\n"
-            "It may be possible to avoid the invalid value by removing the "
-            "`jit` decorator, at the cost of losing optimizations. "
-            "\n\n"
-            "If you see this error, consider opening a bug report at "
-            "https://github.com/jax-ml/jax.")
-      raise FloatingPointError(msg)
+      _raise_for_no_nan_in_deoptimized(e)
  
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])

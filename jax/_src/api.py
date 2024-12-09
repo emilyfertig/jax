@@ -112,7 +112,7 @@ def _nan_check_posthook(fun, args, kwargs, output):
   except dispatch.InternalFloatingPointError as e:
     # compiled_fun can only raise in this case
     assert config.debug_nans.value or config.debug_infs.value
-    pjit._maybe_recursive_nan_check(e, True, fun._fun, args, kwargs)
+    pjit._maybe_recursive_nan_check(e, fun._fun, args, kwargs)
     raise AssertionError("Unreachable") from e
 
 def _update_debug_special_global(_):
@@ -1850,6 +1850,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun_nokwargs(fun, io_tree, py_args)
 
+@api_boundary
 def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
   if len(py_args_) != 1:
     msg = (f"The function returned by `jax.vjp` applied to {name} was called "

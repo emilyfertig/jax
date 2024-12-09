@@ -88,6 +88,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
+  # TODO Fails with "PmapFunction has no attribute _fun"
   def testPmap(self):
     pmap_funcs = [api._cpp_pmap]
 
@@ -109,6 +110,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
 
+  # TODO InternalFloatingPointError gets raised
   def testPmapNoNaN(self):
     ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))
     ans.block_until_ready()
@@ -162,13 +164,36 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in primitive div"):
+        r"invalid value \(nan\) encountered in true_divide"):
       f(inp, inp)
 
+    # TODO ok that this now raises "invalid value (nan) encountered in DebugNansTest...<locals>.f?"
+    # Because of the 1-eqn jaxpr check
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in primitive div"):
+        r"invalid value \(nan\) encountered in"):
       jax.jit(f)(inp, inp)
+
+  # TODO: I don't understand this test, why do we want the deoptimized fn to be called if it just returns a literal?
+  def testDebugNansDoesntReturnDeoptimizedResult(self):
+    @jax.jit
+    def f(x):
+      y = x + 2  # avoid trivial dispatch path by adding some eqn
+      return jnp.nan, y
+
+    with self.assertRaisesRegex(FloatingPointError, "literal"):
+      with jax.debug_nans(True):
+        f(3)
+
+  def testDebugNansInput(self):
+
+    @jax.jit
+    def f(x):
+      return x * 3.
+
+    with self.assertRaisesRegex(FloatingPointError, "input"):
+      with jax.debug_nans(True):
+        f(np.nan)
 
 
 @jtu.with_config(jax_debug_infs=True)
@@ -222,16 +247,6 @@ class DebugInfsTest(jtu.JaxTestCase):
           jax.grad(f)(0.)
       except FloatingPointError:
         pass
-
-  def testDebugNansDoesntReturnDeoptimizedResult(self):
-    @jax.jit
-    def f(x):
-      y = x + 2  # avoid trivial dispatch path by adding some eqn
-      return jnp.nan, y
-
-    with self.assertRaisesRegex(FloatingPointError, "de-optimized"):
-      with jax.debug_nans(True):
-        f(3)
 
 
 if __name__ == '__main__':
