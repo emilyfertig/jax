@@ -331,9 +331,9 @@ class InternalFloatingPointError(Exception):
   name: str
   idx: int
   ty: str
-  buf: array.ArrayImpl
+  buf: basearray.Array
 
-  def __init__(self, name: str, idx: int, ty: str, buf: array.ArrayImpl):
+  def __init__(self, name: str, idx: int, ty: str, buf: basearray.Array):
     self.name = name
     self.idx = idx
     self.ty = ty

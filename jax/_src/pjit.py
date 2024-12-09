@@ -183,8 +183,6 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     init_states = _get_states(p.attrs_tracked)
     args_flat = [*init_states, *args_flat]
 
-  run_impl = (core.trace_state_clean() and not config.debug_key_reuse.value and
-              not config.data_dependent_tracing_fallback.value)
   try:
     # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
     # and set the context manager down the stack?
@@ -262,8 +260,7 @@ def _raise_for_no_nan_in_deoptimized(e) -> None:
         "precise error message. However, the de-optimized function did not "
         "produce invalid values during its execution. This behavior can "
         "result from `jit` optimizations causing the invalid value to be "
-        "produced. It may also arise from having nan/inf constants as "
-        "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+        "produced. "
         "\n\n"
         "It may be possible to avoid the invalid value by removing the "
         "`jit` decorator, at the cost of losing optimizations. "
@@ -1735,15 +1732,6 @@ def _pjit_call_impl_python(
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
   return compiled.unsafe_call(*args), compiled, pgle_profiler
-  # except FloatingPointError as e:
-  #   assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
-
-  #   TODO(emilyaf): Was this a substitute for __is_primitive__?
-  #   if len(jaxpr.eqns) > 1:
-  #     _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
-
-  #   raise FloatingPointError(msg)
-
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
@@ -2416,7 +2404,7 @@ def _pjit_transpose(cts_in, *primals_in,
       # If control reaches this line, we got a NaN on the output of `compiled`
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
       _raise_for_no_nan_in_deoptimized(e)
- 
+
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
     _set_states(attrs_tracked, final_states)
