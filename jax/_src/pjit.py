@@ -250,9 +250,9 @@ def _maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
   except (FloatingPointError, ZeroDivisionError) as e2:
     raise e2 from None
   else:
-    _raise_for_no_nan_in_deoptimized(e)
+    _raise_no_nan_in_deoptimized(e)
 
-def _raise_for_no_nan_in_deoptimized(e) -> None:
+def _raise_no_nan_in_deoptimized(e) -> None:
   msg = (f"{str(e)}. Because "
         "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
         "de-optimized function (i.e., the function as if the `jit` "
@@ -2403,7 +2403,7 @@ def _pjit_transpose(cts_in, *primals_in,
     else:
       # If control reaches this line, we got a NaN on the output of `compiled`
       # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-      _raise_for_no_nan_in_deoptimized(e)
+      _raise_no_nan_in_deoptimized(e)
 
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
