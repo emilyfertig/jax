@@ -287,7 +287,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
                 cts_in, *invals, **eqn.params)
           except (FloatingPointError, ZeroDivisionError) as e:
             e.args = e.args[0] + f'\nWhen differentiating the code on line {source_info_util.summarize(eqn.source_info)}',
-            raise
+            raise e from None
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
         # FIXME: Some invars correspond to primals!
         map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
