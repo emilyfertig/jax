@@ -75,7 +75,7 @@ from jax._src.tree_util import (
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
     PyTreeDef, none_leaf_registry as none_lr)
 from jax._src.util import (
-    HashableFunction, safe_map, safe_zip, wraps,
+    HashableFunction, HashablePartial, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
     merge_lists, subs_list, fun_name, fun_qual_name)
 
@@ -221,14 +221,16 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
       raise AssertionError("Unreachable") from e
   except dispatch.InternalFloatingPointError as e:
     jaxpr = p.params['jaxpr'].jaxpr
+    # What should happen with shard_map?
+    name = fun.f.__qualname__ if isinstance(fun, HashablePartial) else fun.__qualname__
     if any(np.any(np.isnan(atom.val)) for atom in jaxpr.outvars
            if isinstance(atom, core.Literal)):
-      raise FloatingPointError(f"Function {fun.__qualname__} returns an invalid literal ({e.ty})") from None
+      raise FloatingPointError(f"Function {name} returns an invalid literal ({e.ty})") from None
     if any(np.any(np.isnan(arg)) for arg in args
            if not isinstance(arg, core.Tracer)):
-      raise FloatingPointError(f"An input to function {fun.__qualname__} is invalid ({e.ty}).") from None
+      raise FloatingPointError(f"An input to function {name} is invalid ({e.ty}).") from None
     if len(jaxpr.eqns) == 1:
-      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
+      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {name}") from None
     _maybe_recursive_nan_check(e, fun, args, kwargs)
 
   if p.attrs_tracked:

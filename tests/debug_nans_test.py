@@ -24,6 +24,8 @@ from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
+from jax.experimental.shard_map import shard_map
+from jax.sharding import Mesh, PartitionSpec as P
 
 jax.config.parse_flags_with_absl()
 
@@ -88,6 +90,25 @@ class DebugNaNsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
+  def testShardMap(self):
+    mesh = jax.make_mesh((1,), ('x',))
+    f = shard_map(lambda x: 0. / x, mesh=mesh, in_specs=(P('x')), out_specs=P('x'))
+    # For the Cpp pmap, the first execution always goes through Python.
+    f(jnp.array([1.]))
+
+    with self.assertRaisesRegex(
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in parallel computation"):
+      ans = f(jnp.array([0.]))
+      ans.block_until_ready()
+
+    if jax.device_count() >= 2:
+      with self.assertRaisesRegex(
+          FloatingPointError,
+          r"invalid value \(nan\) encountered in parallel computation"):
+        ans = f(jnp.array([1., 0.]))
+        ans.block_until_ready()
+  
   # TODO Fails with "PmapFunction has no attribute _fun"
   def testPmap(self):
     pmap_funcs = [api._cpp_pmap]
@@ -110,7 +131,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
 
-  # TODO InternalFloatingPointError gets raised
   def testPmapNoNaN(self):
     ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))
     ans.block_until_ready()
@@ -135,6 +155,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = jax.jit(lambda x: 0. / x, donate_argnums=(0,))(a)
       ans.block_until_ready()
 
+  # TODO InternalFloatingPointError gets raised
   def testDebugNansPmapWithDonation(self):
     a = jnp.zeros((1,))
     with self.assertRaises(FloatingPointError):
