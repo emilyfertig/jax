@@ -1648,6 +1648,7 @@ def _cpp_pmap(
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
+@api_boundary
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
   ) -> tuple[Any, ...]:
