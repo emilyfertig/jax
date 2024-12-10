@@ -229,7 +229,7 @@ def _python_pjit_helper(fun, jit_info, *args, **kwargs):
     if any(np.any(np.isnan(arg)) for arg in args
            if not isinstance(arg, core.Tracer)):
       raise FloatingPointError(f"An input to function {name} is invalid ({e.ty}).") from None
-    if len(jaxpr.eqns) == 1:
+    if getattr(fun, '__is_primitive__', False):
       raise FloatingPointError(f"invalid value ({e.ty}) encountered in {name}") from None
     _maybe_recursive_nan_check(e, fun, args, kwargs)
 
