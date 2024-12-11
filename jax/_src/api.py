@@ -33,6 +33,7 @@ from typing import (Any, Literal, NamedTuple, TypeVar, overload,
                     cast)
 import weakref
 
+import jax
 import numpy as np
 from contextlib import contextmanager
 
@@ -100,6 +101,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+@api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
@@ -1507,6 +1509,14 @@ class _PmapFastpathData(NamedTuple):
   out_array_shardings: Sequence[Any]
   out_committed: Sequence[Any]
 
+def _maybe_check_special(outs):
+  if not config.debug_nans.value and not config.debug_infs.value: return
+  bufs = [s.data for leaf in tree_leaves(outs)
+          for s in getattr(leaf, 'addressable_shards', [])]
+  try:
+    dispatch.check_special('pmap', bufs)
+  except dispatch.InternalFloatingPointError as e:
+    raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 
 def _cpp_pmap(
     fun: Callable,
@@ -1547,7 +1557,7 @@ def _cpp_pmap(
     )
 
     execute: Callable | None = None
-    with core.take_current_trace() as trace:
+    with core.take_current_trace() as trace, jax.debug_nans(False):
       if isinstance(trace, core.EvalTrace):
         execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
         out = execute(*p.flat_args)
@@ -1557,6 +1567,7 @@ def _cpp_pmap(
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
+    _maybe_check_special(out)
 
     ### Decide whether we can support the C++ fast path
     use_fastpath = False
