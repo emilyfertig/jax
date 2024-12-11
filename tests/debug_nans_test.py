@@ -98,14 +98,14 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in parallel computation"):
+        r"Invalid value \(nan\) encountered in sharded computation"):
       ans = f(jnp.array([0.]))
       ans.block_until_ready()
 
     if jax.device_count() >= 2:
       with self.assertRaisesRegex(
           FloatingPointError,
-          r"invalid value \(nan\) encountered in parallel computation"):
+          r"Invalid value \(nan\) encountered in sharded computation"):
         ans = f(jnp.array([1., 0.]))
         ans.block_until_ready()
   
@@ -185,7 +185,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         FloatingPointError,
-        r"invalid value \(nan\) encountered in true_divide"):
+        r"invalid value \(nan\) encountered in div"):
       f(inp, inp)
 
     # TODO ok that this now raises "invalid value (nan) encountered in DebugNansTest...<locals>.f?"
