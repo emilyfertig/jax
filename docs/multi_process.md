@@ -569,6 +569,150 @@ attribute does not require any communication, so any subset of processes can do
 it without needing the others. That attribute is not available under a
 {func}`jax.jit`.
 
+## Running on a subset of devices
+
+The above examples used global meshes over all devices and ran SPMD 
+computations. Multi-controller JAX also supports meshes over just a subset 
+of devices, which is useful for writing MPMD programs.
+
+For example, let's define a mesh that includes half of the global devices and
+place some data on it. We'll use the `devices` arg of `jax.make_mesh` to 
+indicate the participating devices.
+
+```python
+num_devices = jax.device_count() // 2
+mesh = jax.make_mesh((num_devices,), ('a',), 
+                     devices=jax.devices()[num_devices:],
+                     axis_types=(jax.sharding.AxisType.Explicit,))
+sharding = NamedSharding(mesh, P('a'))
+
+data = np.arange(64).reshape((8, 8))
+x = jax.device_put(x, sharding)
+
+# inspect the sharding of the result
+if jax.process_index() == 0:
+  jax.debug.visualize_array_sharding(x)
+  print()
+  print(x.sharding)
+
+# inspect the data local to each host
+print(f"Devices attached to process {jax.process_index()}: {jax.local_devices()}")
+print(f"Addressable data for process {jax.process_index()}")
+for shard in x.addressable_shards:
+  print(f"device {shard.device} has local data {shard.data}")
+```
+
+Process 0 prints the following sharding, which contains only the second half of
+the devices.
+
+Processes 0 has no addressable shards, so the remainder of its printed output 
+is
+
+...
+
+Process 1 prints only these lines as well, since it too has no addressable 
+shards.
+
+Processes 3 and 4 have devices that participate in the sharding. Here's what 
+process 3 prints:
+
+...
+
+Now let's run the same simple computation as in `toy.py` on this array and 
+inspect the results in each process.
+
+```python
+result = jnp.sum(jnp.sin(x))
+
+if jax.process_index() == 0:
+  jax.debug.visualize_array_sharding(result)
+  print()
+  print(result.sharding)
+
+print(f"process={proc_id} got result: {result}")
+```
+
+As in the first example, the collective `jnp.sum` replicates the result across 
+all devices that participate in the sharding. In the first example, that was 
+all global devices, but now only processes 3 and 4 have devices that 
+participate and the sharding is the following. 
+
+...
+
+Since processes 3 and 4 have participating devices, they have access to the
+output and can print it:
+
+...
+
+Processes 0 and 1 do not participate, so they print this instead:
+
+...
+
+As in the earlier examples, each process must apply the same operations in the
+same order to the input. Note that this applies only to the processes that
+participate in the sharding -- in this example, we could have run the 
+computation only in processes 3 and 4, but running it in non-participating
+processes is fine too.
+
+### Transferring data across processes with `jax.device_put`
+
+{func}`jax.device_put` can be used to transfer data between shardings that
+contain devices attached to different processes. As with cross-process 
+collectives, the data is transferred via high-speed networking links like TPU 
+ICI or NVLink when available.
+
+For example, say you're writing a two-stage MPMD pipeline-parallel program 
+where each stage runs on half of the global devices. After the first stage
+completes, use {func}`jax.device_put` to transfer the result to the other set of
+devices to run the next stage of the pipeline.
+
+```python
+# Create a sharding that contains half of the global devices for the first
+# stage of the pipeline.
+num_devices = jax.device_count() // 2
+mesh_first_half = jax.make_mesh((num_devices,), ('a',),
+                                devices=jax.devices()[:num_devices],
+                                axis_types=(jax.sharding.AxisType.Explicit,))
+sharding_first_half = NamedSharding(mesh_first_half, P('a'))
+
+# Create a sharding that contains the other half of the devices.
+mesh_second_half = jax.make_mesh((num_devices,), ('a',),
+                                 devices=jax.devices()[num_devices:],
+                                 axis_types=(jax.sharding.AxisType.Explicit,))
+sharding_second_half = NamedSharding(mesh_second_half, P('a'))
+
+# Place the input data on the first sharding.
+data = np.arange(64).reshape((8, 8))
+x = jax.device_put(x, sharding_first_half)
+
+# `f` is the first stage of the pipeline
+@jax.jit
+def f(x):
+  # Arbitrary JAX computation.
+  return x
+
+# `g` is the second stage of the pipeline
+@jax.jit
+def g(x):
+  # More JAX operations.
+  return x
+
+# Run the first stage.
+y = f(x)
+
+# Transfer the data to the other mesh.
+z = jax.device_put(y, sharding_second_half)
+
+# Run the second stage.
+result = g(z)
+```
+
+Cross-process `jax.device_put` is currently supported only when the input and 
+output shardings have non-overlapping sets of participating processes, contain
+the same number of devices, and have the same `PartitionSpec`s. If you're 
+finding this overly restrictive, please file a
+[Github Issue](https://github.com/jax-ml/jax/issues).
+
 ## Making process-spanning arrays from external data
 
 There are three main ways to create process-spanning {class}`jax.Array`s from
@@ -651,6 +795,42 @@ global_array = jax.make_array_from_single_device_arrays(
 assert (np.all(
     jax.experimental.multihost_utils.process_allgather(global_array) ==
     np.arange(jax.device_count()).reshape(global_array.shape)))
+```
+
+All of these methods can also be used to create arrays that span only a subset
+of processes. For example, we can use {func}`jax.make_array_from_single_device_arrays`
+to create an array spanning the devices on processes 0 and 1:
+
+```python
+num_participating_processes = 2
+shape = (num_participating_processes, jax.local_device_count())
+mesh = jax.make_mesh(shape, ('i', 'j'))
+sharding = NamedSharding(mesh, P('i', 'j'))
+
+# manually create per-device data equivalent to 
+# np.arange(jax.local_device_count() * 2)
+if jax.processes_index() in (0, 1):
+  local_arrays = [
+      jax.device_put(
+          jnp.array([[jax.process_index() * jax.local_device_count() + i]]),
+          device)
+      for i, device in enumerate(jax.local_devices())
+  ]
+else:
+  local_arrays = []
+
+# assemble an array from the local_arrays across processes 0 and 1
+array = jax.make_array_from_single_device_arrays(
+    shape=shape,
+    sharding=sharding,
+    arrays=local_arrays)
+
+# sanity check
+if jax.process_index() in (0, 1):
+  for i, shard in enumerate(array.addressable_shards):
+    assert shard.data[0] == jax.process_index() * jax.local_device_count() + i
+else:
+  assert not array.addressable_shards
 ```
 
 [cloud_tpu]: https://cloud.google.com/tpu?hl=en
